@@ -1,12 +1,12 @@
 extern "C" {
 #include "audio_ai.h"
+#include "mic.h"
 }
 
 #include <math.h>
 #include <string.h>
 #include <new>
 
-#include "driver/i2s_std.h"
 #include "esp_dsp.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
@@ -19,12 +19,8 @@ extern "C" {
 #include "tensorflow/lite/micro/micro_mutable_op_resolver.h"
 #include "tensorflow/lite/schema/schema_generated.h"
 
-// ===================== 硬件连接配置（根据实际接线修改） =====================
-#define AUDIO_I2S_PORT          I2S_NUM_0
-#define AUDIO_I2S_BCLK_GPIO     GPIO_NUM_4
-#define AUDIO_I2S_WS_GPIO       GPIO_NUM_5
-#define AUDIO_I2S_DIN_GPIO      GPIO_NUM_6
-// 如果麦克风是PDM接口（如MP34DT01），请改用 driver/i2s_pdm.h 并调整初始化。
+// 麦克风硬件配置已移至 mic.h / mic.c，此处不再重复定义
+// INMP441 接线: BCLK=GPIO17, WS=GPIO18, SD=GPIO16
 
 // ===================== 音频/推理参数 =====================
 #define TAG                     "AUDIO_AI"
@@ -45,7 +41,6 @@ extern "C" {
 #define CLASS_DOORBELL          2
 
 // ===================== 静态变量 =====================
-static i2s_chan_handle_t s_rx_chan = NULL;
 static TaskHandle_t s_audio_task_handle = NULL;
 static SemaphoreHandle_t s_result_mutex = NULL;
 
@@ -230,16 +225,30 @@ static esp_err_t run_inference(audio_result_t *out)
 
 static void audio_task(void *pvParameters)
 {
-    size_t bytes_read = 0;
     int32_t read_idx = 0;
     int16_t temp_buf[256];
 
     ESP_LOGI(TAG, "音频推理任务已启动");
 
+    // 调试：前5次读取打印采样值，验证麦克风是否正常
+    int debug_count = 0;
+
     while (1) {
-        // 读取一小段音频到临时缓冲区
-        if (i2s_channel_read(s_rx_chan, temp_buf, sizeof(temp_buf), &bytes_read, portMAX_DELAY) == ESP_OK) {
-            int32_t samples_read = bytes_read / sizeof(int16_t);
+        // 通过 mic 模块读取音频（16位样本）
+        int samples_read = mic_read_samples(temp_buf, 256, pdMS_TO_TICKS(100));
+
+        if (samples_read > 0) {
+            // 调试：打印前5次读取的采样值
+            if (debug_count < 5) {
+                int16_t min_val = 0, max_val = 0;
+                for (int i = 0; i < samples_read; i++) {
+                    if (i == 0 || temp_buf[i] < min_val) min_val = temp_buf[i];
+                    if (i == 0 || temp_buf[i] > max_val) max_val = temp_buf[i];
+                }
+                ESP_LOGI(TAG, "调试[%d]: 读了%d个样本, 最小值=%d, 最大值=%d (对麦克风说话时最大值应该变化)",
+                         debug_count, samples_read, min_val, max_val);
+                debug_count++;
+            }
 
             // 写入环形缓冲区
             for (int i = 0; i < samples_read; i++) {
@@ -286,36 +295,10 @@ esp_err_t audio_ai_init(void)
     // 初始化Mel滤波器组
     init_mel_filterbank();
 
-    // 初始化I2S标准模式（接收）
-    i2s_chan_config_t chan_cfg = I2S_CHANNEL_DEFAULT_CONFIG(AUDIO_I2S_PORT, I2S_ROLE_MASTER);
-    ret = i2s_new_channel(&chan_cfg, NULL, &s_rx_chan);
+    // 初始化麦克风（使用 mic.c 模块，基于组员验证过的配置）
+    ret = mic_init();
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "I2S 通道创建失败: %s", esp_err_to_name(ret));
-        return ret;
-    }
-
-    i2s_std_config_t std_cfg = {
-        .clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(SAMPLE_RATE),
-        .slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_MONO),
-        .gpio_cfg = {
-            .mclk = I2S_GPIO_UNUSED,
-            .bclk = AUDIO_I2S_BCLK_GPIO,
-            .ws = AUDIO_I2S_WS_GPIO,
-            .dout = I2S_GPIO_UNUSED,
-            .din = AUDIO_I2S_DIN_GPIO,
-            .invert_flags = {
-                .mclk_inv = false,
-                .bclk_inv = false,
-                .ws_inv = false,
-            },
-        },
-    };
-
-    ret = i2s_channel_init_std_mode(s_rx_chan, &std_cfg);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "I2S 标准模式初始化失败: %s", esp_err_to_name(ret));
-        i2s_del_channel(s_rx_chan);
-        s_rx_chan = NULL;
+        ESP_LOGE(TAG, "麦克风初始化失败: %s", esp_err_to_name(ret));
         return ret;
     }
 
@@ -358,15 +341,11 @@ esp_err_t audio_ai_init(void)
 
 esp_err_t audio_ai_start(void)
 {
-    if (!s_rx_chan || !s_interpreter) {
+    if (!s_interpreter) {
         return ESP_ERR_INVALID_STATE;
     }
 
-    esp_err_t ret = i2s_channel_enable(s_rx_chan);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "I2S 通道使能失败: %s", esp_err_to_name(ret));
-        return ret;
-    }
+    // 麦克风在 mic_init() 中已启动，无需额外 enable
 
     if (s_audio_task_handle == NULL) {
         BaseType_t xRet = xTaskCreatePinnedToCore(
@@ -385,9 +364,7 @@ esp_err_t audio_ai_stop(void)
         vTaskDelete(s_audio_task_handle);
         s_audio_task_handle = NULL;
     }
-    if (s_rx_chan) {
-        i2s_channel_disable(s_rx_chan);
-    }
+    // 麦克风卸载由系统管理，此处不处理
     return ESP_OK;
 }
 
@@ -405,13 +382,13 @@ esp_err_t audio_ai_run_once(audio_result_t *result)
 {
     if (!s_interpreter) return ESP_ERR_INVALID_STATE;
 
-    size_t bytes_read = 0;
-    int16_t *temp_buf = (int16_t *)heap_caps_malloc(AUDIO_BUFFER_SAMPLES * sizeof(int16_t), MALLOC_CAP_8BIT);
-    if (!temp_buf) return ESP_ERR_NO_MEM;
-
-    i2s_channel_read(s_rx_chan, temp_buf, AUDIO_BUFFER_SAMPLES * sizeof(int16_t), &bytes_read, portMAX_DELAY);
-    memcpy(s_audio_buffer, temp_buf, AUDIO_BUFFER_SAMPLES * sizeof(int16_t));
-    heap_caps_free(temp_buf);
+    // 通过 mic 模块读取1秒音频
+    int total_read = 0;
+    while (total_read < AUDIO_BUFFER_SAMPLES) {
+        int n = mic_read_samples(&s_audio_buffer[total_read], AUDIO_BUFFER_SAMPLES - total_read, pdMS_TO_TICKS(100));
+        if (n <= 0) break;
+        total_read += n;
+    }
 
     extract_features();
     esp_err_t ret = run_inference(result);

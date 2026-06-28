@@ -8,7 +8,8 @@
 #include "freertos/task.h"
 
 // ===================== 硬件连接配置（根据实际接线修改） =====================
-#define BUTTON_GPIO             GPIO_NUM_18
+// 注意：GPIO16/17/18 已被 I2S 麦克风占用（DIN/BCLK/WS），不能重复使用！
+#define BUTTON_GPIO             GPIO_NUM_4    // 按键（原GPIO18与麦克风WS冲突，已改）
 #define PIR_GPIO                GPIO_NUM_19
 #define EMERGENCY_GPIO          GPIO_NUM_21
 
