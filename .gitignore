@@ -83,3 +83,7 @@ Desktop.ini
 # TensorFlow SavedModel intermediate output
 model/saved_model/
 model/model.tflite
+
+# 音频训练数据（体积大，不纳入版本控制）
+model/data/
+model/*.tflite

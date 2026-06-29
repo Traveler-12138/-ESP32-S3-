@@ -1,0 +1,6 @@
+# 音频分类模型训练依赖
+# 在电脑上安装（不是 ESP32 上）
+sounddevice>=0.4.6
+numpy>=1.24.0
+tensorflow>=2.13.0
+scipy>=1.10.0
