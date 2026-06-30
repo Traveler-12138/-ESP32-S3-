@@ -121,10 +121,16 @@ esp_err_t event_fusion_init(void)
 
 void event_fusion_update_audio(bool audio_triggered)
 {
-    if (audio_triggered) {
+    // 仅在 audio_active 从 false 跳变为 true 时设置触发时间戳。
+    // 原实现: 只要 audio_triggered 为 true 就刷新 audio_trigger_ms,
+    // 而 main 循环每 200ms 查询一次、推理约 1.4s 一次, 导致同一个 KNOCK
+    // 判决在保持窗口内被反复刷新, 窗口永远不过期, 单通道日志不停打印。
+    // 修复后: 保持窗口从"首次触发"起算, 到期自然过期, 下次新触发才重新计时。
+    if (audio_triggered && !s_state.audio_active) {
         s_state.audio_active = true;
         s_state.audio_trigger_ms = esp_timer_get_time() / 1000ULL;
     }
+    // audio_active 的清除 (过期) 由 is_audio_active() 统一处理, 此处不主动清
 }
 
 esp_err_t event_fusion_decide(fusion_result_t *result)

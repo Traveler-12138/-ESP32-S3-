@@ -80,10 +80,7 @@ Desktop.ini
 # WorkBuddy workspace data (local agent memory, not for version control)
 .workbuddy/
 
-# TensorFlow SavedModel intermediate output
-model/saved_model/
-model/model.tflite
-
-# 音频训练数据（体积大，不纳入版本控制）
-model/data/
-model/*.tflite
+# 训练相关文件已迁出到 E:\ESP32\Training_file, 不再属于本项目。
+# 固件推理用的模型数据 main/model_data.c / main/model_data.h 已在 main/ 中,
+# 由训练脚本 (E:\ESP32\Training_file\train_model.py) 重新训练时生成。
+# 项目内不再保留任何训练数据/脚本/虚拟环境。

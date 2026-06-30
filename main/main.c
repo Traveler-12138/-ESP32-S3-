@@ -62,9 +62,12 @@ void app_main(void)
         audio_ai_get_latest_result(&audio);
 
         // 2. 更新音频通道状态
+        // audio_ai.cpp 已经做了完整的三态判断(噪声/不确定/确信)和连续确认,
+        // 这里只需要检查 event 是否为 KNOCK/DOORBELL 即可, 不再加二次阈值。
+        // 原代码的 >0.55 与 audio_ai.cpp 的 0.60 不一致, 会导致 audio_ai 判定
+        // KNOCK 但 main.c 不认的矛盾。现在 audio_ai.cpp 阈值降到 0.50, 这里也去掉。
         bool audio_triggered = audio.valid &&
-                               (audio.event == AUDIO_EVENT_KNOCK || audio.event == AUDIO_EVENT_DOORBELL) &&
-                               (audio.confidence > 0.55f);
+                               (audio.event == AUDIO_EVENT_KNOCK || audio.event == AUDIO_EVENT_DOORBELL);
         event_fusion_update_audio(audio_triggered);
 
         // 3. 执行融合判决
