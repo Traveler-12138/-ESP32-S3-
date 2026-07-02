@@ -1,6 +1,8 @@
 idf_component_register(SRCS "mic.c" "main.c"
                             "audio_ai.cpp"
                             "event_fusion.c"
+                            "door_button.c"
+                            "pir.c"
                             "model_data.c"
                     INCLUDE_DIRS "."
                     REQUIRES nvs_flash

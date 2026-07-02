@@ -1,5 +1,5 @@
 // Auto-generated model data. DO NOT EDIT.
-// 由 model/train_model.py 自动生成
+// 由 E:\ESP32\Training_file\train_model.py 自动生成
 #include "model_data.h"
 
 const unsigned char g_model_data[] = {

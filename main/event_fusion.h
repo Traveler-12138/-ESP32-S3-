@@ -12,16 +12,27 @@ extern "C" {
  * @file event_fusion.h
  * @brief 三通道感知融合判决模块
  *
- * 输入：物理按键、PIR人体红外、音频AI识别结果。
- * 逻辑：任意两通道在指定时间窗口内同时有效，才触发正式来访提醒。
- *       单通道触发仅作为日志/低优先级事件。
+ * 输入通道：
+ *   - 物理按键（门外门铃按钮，由 door_button 模块驱动，含消抖/LED指示）
+ *   - PIR 人体红外（由 pir 模块驱动，轮询）
+ *   - 音频AI识别（由 audio_ai 模块提供，通过 update_audio 外部传入）
+ *
+ * 判决逻辑：
+ *   - 任意单通道在时间窗口内触发 -> SINGLE_CHANNEL（仅日志记录，不提醒）
+ *   - 任意两通道在时间窗口内同时有效 -> VISITOR（正式来访提醒）
+ *   - 紧急呼叫（来自另一块板子的远端通信）-> EMERGENCY（最高优先级）
+ *
+ * 紧急按钮说明：
+ *   紧急按钮不接在本板 GPIO 上，而是安装在另一块板子上，
+ *   通过通信（ESP-NOW/MQTT/串口等）将按下事件传给本板，
+ *   通信层收到后调用 event_fusion_trigger_emergency() 即可。
  */
 
 typedef enum {
     FUSION_EVENT_NONE = 0,
     FUSION_EVENT_SINGLE_CHANNEL,   // 单通道触发（仅日志）
     FUSION_EVENT_VISITOR,          // 至少两通道触发 -> 正式来访提醒
-    FUSION_EVENT_EMERGENCY         // 室内紧急呼叫按钮（直接高优先级）
+    FUSION_EVENT_EMERGENCY         // 室内紧急呼叫按钮（远端通信传入，最高优先级）
 } fusion_event_t;
 
 typedef struct {
@@ -34,7 +45,7 @@ typedef struct {
 } fusion_result_t;
 
 /**
- * @brief 初始化GPIO、中断与融合状态
+ * @brief 初始化融合模块（内部会初始化按键与PIR驱动）
  */
 esp_err_t event_fusion_init(void);
 
@@ -43,6 +54,14 @@ esp_err_t event_fusion_init(void);
  * @param audio_triggered 音频是否识别到敲门/门铃
  */
 void event_fusion_update_audio(bool audio_triggered);
+
+/**
+ * @brief 触发紧急呼叫（供远端通信层调用）
+ *
+ * 紧急按钮安装在另一块板子上，当该板子通过通信告知"紧急按钮按下"时，
+ * 通信处理代码调用本接口，融合模块会在后续判决中输出 EMERGENCY 事件。
+ */
+void event_fusion_trigger_emergency(void);
 
 /**
  * @brief 执行一次融合判决
@@ -56,12 +75,12 @@ esp_err_t event_fusion_decide(fusion_result_t *result);
 bool event_fusion_get_emergency_state(void);
 
 /**
- * @brief 获取当前按键状态（调试用）
+ * @brief 获取当前按键状态（调试用，保持窗口内有效）
  */
 bool event_fusion_get_button_state(void);
 
 /**
- * @brief 获取当前PIR状态（调试用）
+ * @brief 获取当前PIR状态（调试用，保持窗口内有效）
  */
 bool event_fusion_get_pir_state(void);
 
