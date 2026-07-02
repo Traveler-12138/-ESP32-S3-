@@ -28,6 +28,7 @@ typedef struct {
     float confidence;          // 最高类置信度 [0, 1]
     bool valid;                // 是否完成一次有效推理
     float raw_probs[3];        // 三类原始概率 [noise, knock, doorbell]
+    uint32_t inference_seq;    // 推理序列号（每次新推理递增，用于上层去重消费）
 } audio_result_t;
 
 /**

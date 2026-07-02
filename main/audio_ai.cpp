@@ -407,6 +407,7 @@ static void audio_task(void *pvParameters)
                     s_inference_count++;
                     extract_features();
                     if (run_inference(&result) == ESP_OK) {
+                        result.inference_seq = s_inference_count;  // 打上本次推理的序列号
                         xSemaphoreTake(s_result_mutex, portMAX_DELAY);
                         memcpy(&s_latest_result, &result, sizeof(audio_result_t));
                         xSemaphoreGive(s_result_mutex);
@@ -573,6 +574,7 @@ esp_err_t audio_ai_run_once(audio_result_t *result)
 
     extract_features();
     esp_err_t ret = run_inference(result);
+    result->inference_seq = s_inference_count;
 
     xSemaphoreTake(s_result_mutex, portMAX_DELAY);
     memcpy(&s_latest_result, result, sizeof(audio_result_t));

@@ -10,6 +10,15 @@
 
 static const char *TAG = "MAIN";
 
+// 跟踪上一次已消费的推理序列号，用于去重。
+// 音频推理 ~1.4s 才更新一次结果，但 main 循环每 200ms 查询一次。
+// 用推理序列号(inference_seq)判断"是否是新的一次推理"：
+//   - 同一次推理被 200ms 循环读多次 → seq 不变 → 不重复激活（防脉冲链）
+//   - 新的 KNOCK/DOORBELL 推理 → seq 变化 → 重新激活音频窗口（防连续敲门漏检）
+// 这样连续敲门(KNOCK→KNOCK→KNOCK)期间，每次新推理都能续期音频窗口，
+// 不会因为"前一次也是KNOCK"而漏掉上升沿。
+static uint32_t s_last_consumed_audio_seq = 0;
+
 /**
  * @brief 来访提醒回调（预留：后续接入RGB灯带、OLED、振动器、MQTT等）
  */
@@ -61,13 +70,18 @@ void app_main(void)
         audio_result_t audio = {0};
         audio_ai_get_latest_result(&audio);
 
-        // 2. 更新音频通道状态
-        // audio_ai.cpp 已经做了完整的三态判断(噪声/不确定/确信)和连续确认,
-        // 这里只需要检查 event 是否为 KNOCK/DOORBELL 即可, 不再加二次阈值。
-        // 原代码的 >0.55 与 audio_ai.cpp 的 0.60 不一致, 会导致 audio_ai 判定
-        // KNOCK 但 main.c 不认的矛盾。现在 audio_ai.cpp 阈值降到 0.50, 这里也去掉。
-        bool audio_triggered = audio.valid &&
-                               (audio.event == AUDIO_EVENT_KNOCK || audio.event == AUDIO_EVENT_DOORBELL);
+        // 2. 更新音频通道状态（推理序列号去重，防脉冲链 + 防连续敲门漏检）
+        // audio_ai.cpp 已做了三态判断和连续确认，这里只需检查 event 是否为 KNOCK/DOORBELL。
+        // 关键：用 inference_seq 判断是否为新的一次推理，每次新推理只激活一次音频窗口。
+        //   - 同一次推理被 200ms 循环反复读 → seq 不变 → 不重复激活
+        //   - 新的 KNOCK 推理到来 → seq 变化 → 重新激活（即使前一次也是 KNOCK）
+        bool audio_triggered = false;
+        if (audio.valid &&
+            (audio.event == AUDIO_EVENT_KNOCK || audio.event == AUDIO_EVENT_DOORBELL) &&
+            audio.inference_seq != s_last_consumed_audio_seq) {
+            audio_triggered = true;
+            s_last_consumed_audio_seq = audio.inference_seq;
+        }
         event_fusion_update_audio(audio_triggered);
 
         // 3. 执行融合判决

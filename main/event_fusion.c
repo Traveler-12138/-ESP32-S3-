@@ -15,6 +15,7 @@
 #define PIR_HOLD_MS             2000    // PIR触发后保持有效
 #define AUDIO_HOLD_MS           1500    // 音频识别结果保持有效
 #define EMERGENCY_HOLD_MS       5000    // 紧急呼叫保持有效（确保上层一定处理到）
+#define VISITOR_COOLDOWN_MS     5000    // VISITOR触发后的冷却期：期内两通道仍active也不重复报警
 
 // ===================== 状态结构 =====================
 typedef struct {
@@ -31,6 +32,7 @@ typedef struct {
 
 static fusion_state_t s_state = {0};
 static uint32_t s_last_log_ms = 0;
+static uint32_t s_last_visitor_ms = 0;   // 上次 VISITOR 触发时间戳（用于冷却期去重）
 
 // ===================== 通道更新 =====================
 static void update_button_channel(void)
@@ -145,8 +147,17 @@ esp_err_t event_fusion_decide(fusion_result_t *result)
     int active_count = (button ? 1 : 0) + (pir ? 1 : 0) + (audio ? 1 : 0);
 
     if (active_count >= 2) {
-        result->event = FUSION_EVENT_VISITOR;
-        ESP_LOGI(TAG, "融合判定-有访客: 按键=%d, PIR=%d, 音频=%d", button, pir, audio);
+        // 冷却期去重：VISITOR 触发后进入冷却期，期内两通道仍 active 也不重复报警。
+        // 解决"一次按键在3s保持窗口内被200ms循环反复报14次有访客"的问题。
+        uint32_t now = esp_timer_get_time() / 1000ULL;
+        if (now - s_last_visitor_ms >= VISITOR_COOLDOWN_MS) {
+            result->event = FUSION_EVENT_VISITOR;
+            s_last_visitor_ms = now;
+            ESP_LOGI(TAG, "融合判定-有访客: 按键=%d, PIR=%d, 音频=%d", button, pir, audio);
+        } else {
+            // 冷却期内：不重复触发，返回 NONE（已报过，上层无需再处理）
+            result->event = FUSION_EVENT_NONE;
+        }
     } else if (active_count == 1) {
         result->event = FUSION_EVENT_SINGLE_CHANNEL;
         uint32_t now = esp_timer_get_time() / 1000ULL;
